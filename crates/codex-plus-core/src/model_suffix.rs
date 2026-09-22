@@ -199,66 +199,109 @@ const ASTRA_METADATA_JSON: &str = include_str!(concat!(
 /// fast tier）排在供应商事实之前；各文件 slug 两两不相交，顺序仅表达优先级。
 /// deepseek 文件在官方 DeepSeek Responses 场景由 deepseek_model_template_entry
 /// 优先处理，放这里覆盖经中转使用 deepseek 模型的场景。
-const VENDOR_METADATA_JSONS: &[&str] = &[
-    GPT56_METADATA_JSON,
-    ASTRA_METADATA_JSON,
-    DEEPSEEK_METADATA_JSON,
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/doubao-model-metadata.json"
-    )),
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/gemini-model-metadata.json"
-    )),
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/glm-model-metadata.json"
-    )),
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/grok-model-metadata.json"
-    )),
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/kimi-model-metadata.json"
-    )),
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/mimo-model-metadata.json"
-    )),
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/minimax-model-metadata.json"
-    )),
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/mistral-model-metadata.json"
-    )),
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/muse-model-metadata.json"
-    )),
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/nvidia-model-metadata.json"
-    )),
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/qwen-model-metadata.json"
-    )),
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/stepfun-model-metadata.json"
-    )),
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/thinkingmachines-model-metadata.json"
-    )),
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/gptoss-model-metadata.json"
-    )),
+/// 每项为 (来源名, JSON)：来源名用于管理器 UI 的内置匹配提示与行级标记。
+const VENDOR_METADATA_SOURCES: &[(&str, &str)] = &[
+    ("gpt-5.6 兼容", GPT56_METADATA_JSON),
+    ("gpt-6-astra 兼容", ASTRA_METADATA_JSON),
+    ("DeepSeek", DEEPSEEK_METADATA_JSON),
+    (
+        "豆包",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/doubao-model-metadata.json"
+        )),
+    ),
+    (
+        "Gemini",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/gemini-model-metadata.json"
+        )),
+    ),
+    (
+        "GLM",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/glm-model-metadata.json"
+        )),
+    ),
+    (
+        "Grok",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/grok-model-metadata.json"
+        )),
+    ),
+    (
+        "Kimi",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/kimi-model-metadata.json"
+        )),
+    ),
+    (
+        "MiMo",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/mimo-model-metadata.json"
+        )),
+    ),
+    (
+        "MiniMax",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/minimax-model-metadata.json"
+        )),
+    ),
+    (
+        "Mistral",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/mistral-model-metadata.json"
+        )),
+    ),
+    (
+        "Muse",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/muse-model-metadata.json"
+        )),
+    ),
+    (
+        "NVIDIA",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/nvidia-model-metadata.json"
+        )),
+    ),
+    (
+        "Qwen",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/qwen-model-metadata.json"
+        )),
+    ),
+    (
+        "StepFun",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/stepfun-model-metadata.json"
+        )),
+    ),
+    (
+        "Thinking Machines",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/thinkingmachines-model-metadata.json"
+        )),
+    ),
+    (
+        "gpt-oss",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/gptoss-model-metadata.json"
+        )),
+    ),
 ];
 
 pub fn requires_bundled_metadata_catalog(slug: &str) -> bool {
@@ -308,6 +351,97 @@ pub fn model_ui_metadata(slug: &str) -> Option<Value> {
             .cloned()
             .unwrap_or_else(|| json!([]))
     }))
+}
+
+/// 内置元数据匹配结果：来源名 + 完整条目（含窗口/展示/档位等字段）。
+/// 供管理器「元数据导入区」显示匹配状态与预填文本使用。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BuiltinModelMetadata {
+    /// 来源名（如 "Kimi"、"gpt-5.6 兼容"、"官方内置"）
+    pub source: String,
+    /// 完整模型条目
+    pub entry: Value,
+}
+
+/// 按模型名查内置元数据（剥 `[1M]` 后缀、大小写不敏感）：
+/// 精调/供应商层 → 官方运行时缓存（models_cache.json）→ 官方 bundled 静态
+/// 资产——与生成链的模板查找保持一致；未命中即生成时回退 gpt-5.5 模板。
+pub fn builtin_model_metadata(slug: &str) -> Option<BuiltinModelMetadata> {
+    let (slug, _) = parse_model_suffix(slug);
+    let slug = slug.trim();
+    if slug.is_empty() {
+        return None;
+    }
+    if let Some((source, entry)) = vendor_source_metadata_entry(slug) {
+        return Some(BuiltinModelMetadata {
+            source: source.to_string(),
+            entry,
+        });
+    }
+    if let Some(entry) = runtime_models_cache_entry(slug) {
+        return Some(BuiltinModelMetadata {
+            source: "官方内置".to_string(),
+            entry,
+        });
+    }
+    bundled_template_entry(slug).map(|entry| BuiltinModelMetadata {
+        source: "官方内置".to_string(),
+        entry,
+    })
+}
+
+/// 内置元数据索引（管理器模型列表行级标记用）：嵌入层 + 运行时官方缓存全量
+/// {slug, source, display_name, context_window}，按生成链优先级去重。
+pub fn builtin_model_metadata_index() -> Vec<Value> {
+    let mut seen = std::collections::HashSet::new();
+    let mut index = Vec::new();
+    let mut push_entry = |source: &str, entry: &Value| {
+        let Some(slug) = entry.get("slug").and_then(Value::as_str) else {
+            return;
+        };
+        if !seen.insert(slug.to_ascii_lowercase()) {
+            return;
+        }
+        index.push(json!({
+            "slug": slug,
+            "source": source,
+            "display_name": entry
+                .get("display_name")
+                .and_then(Value::as_str)
+                .unwrap_or(slug),
+            "context_window": entry
+                .get("context_window")
+                .or_else(|| entry.get("max_context_window")),
+        }));
+    };
+    let catalog_models = |catalog_json: &str| -> Option<Vec<Value>> {
+        serde_json::from_str::<Value>(catalog_json)
+            .ok()?
+            .get("models")?
+            .as_array()
+            .cloned()
+    };
+    for (source, catalog_json) in VENDOR_METADATA_SOURCES {
+        for entry in catalog_models(catalog_json).into_iter().flatten() {
+            push_entry(source, &entry);
+        }
+    }
+    if let Ok(catalog) = serde_json::from_str::<Value>(
+        &std::fs::read_to_string(
+            crate::codex_home::default_codex_home_dir().join("models_cache.json"),
+        )
+        .unwrap_or_default(),
+    ) {
+        if let Some(models) = catalog.get("models").and_then(Value::as_array) {
+            for entry in models {
+                push_entry("官方内置", entry);
+            }
+        }
+    }
+    for entry in catalog_models(BUNDLED_TEMPLATE_JSON).into_iter().flatten() {
+        push_entry("官方内置", &entry);
+    }
+    index
 }
 
 /// 构建 codex model_catalog_json 内容。
@@ -508,9 +642,16 @@ fn first_bundled_template_entry() -> Option<Value> {
 }
 
 fn compatibility_metadata_entry(slug: &str) -> Option<Value> {
-    VENDOR_METADATA_JSONS
+    vendor_source_metadata_entry(slug).map(|(_, entry)| entry)
+}
+
+/// 在精调/供应商层按 slug 查找，命中时附带来源名（管理器 UI 提示用）。
+fn vendor_source_metadata_entry(slug: &str) -> Option<(&'static str, Value)> {
+    VENDOR_METADATA_SOURCES
         .iter()
-        .find_map(|catalog_json| catalog_metadata_entry(catalog_json, slug))
+        .find_map(|(source, catalog_json)| {
+            catalog_metadata_entry(catalog_json, slug).map(|entry| (*source, entry))
+        })
 }
 
 fn catalog_metadata_entry(catalog_json: &str, slug: &str) -> Option<Value> {

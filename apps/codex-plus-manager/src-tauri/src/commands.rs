@@ -845,11 +845,24 @@ pub fn restart_codex_plus(request: LaunchRequest) -> CommandResult<Value> {
     #[cfg(windows)]
     let launchers = match codex_plus_core::watcher::LauncherExitSnapshot::capture() {
         Ok(snapshot) => snapshot,
-        Err(error) => return failed(&format!("无法确认旧启动器身份，未执行重启：{error}"), json!({})),
+        Err(error) => {
+            return failed(
+                &format!("无法确认旧启动器身份，未执行重启：{error}"),
+                json!({}),
+            );
+        }
     };
     if let Err(error) = stop_codex_plus_for_restart(
-        || codex_plus_core::watcher::stop_codex_processes_for_debug_port_and_wait(request.debug_port),
-        || codex_plus_core::native_browser::wait_for_monitor_shutdown(std::time::Duration::from_secs(10)),
+        || {
+            codex_plus_core::watcher::stop_codex_processes_for_debug_port_and_wait(
+                request.debug_port,
+            )
+        },
+        || {
+            codex_plus_core::native_browser::wait_for_monitor_shutdown(
+                std::time::Duration::from_secs(10),
+            )
+        },
         || {
             #[cfg(windows)]
             launchers.wait_for_exit(std::time::Duration::from_secs(10))?;
@@ -859,7 +872,9 @@ pub fn restart_codex_plus(request: LaunchRequest) -> CommandResult<Value> {
         },
     ) {
         return failed(
-            &format!("Codex 已请求停止，但原生浏览器清理或旧启动器退出未完成；未强制终止启动器或启动新实例：{error}"),
+            &format!(
+                "Codex 已请求停止，但原生浏览器清理或旧启动器退出未完成；未强制终止启动器或启动新实例：{error}"
+            ),
             json!({"debugPort": request.debug_port, "helperPort": request.helper_port}),
         );
     }
@@ -1430,6 +1445,40 @@ pub fn weixin_connect_stop() -> CommandResult<codex_plus_core::connect::WeixinCo
             "微信连接已停止。"
         },
         current_weixin_status(),
+    )
+}
+
+#[tauri::command]
+pub fn query_builtin_model_metadata(slug: String) -> CommandResult<Value> {
+    match codex_plus_core::model_suffix::builtin_model_metadata(slug.as_str()) {
+        Some(metadata) => ok(
+            "内置元数据已匹配。",
+            json!({
+                "matched": true,
+                "source": metadata.source,
+                "entry": metadata.entry,
+            }),
+        ),
+        None => ok(
+            "未命中内置元数据，生成时回退官方模板。",
+            json!({
+                "matched": false,
+                "fallback": {
+                    "slug": "gpt-5.5",
+                    "context_window": 272_000,
+                },
+            }),
+        ),
+    }
+}
+
+#[tauri::command]
+pub fn builtin_model_metadata_index() -> CommandResult<Value> {
+    let index = codex_plus_core::model_suffix::builtin_model_metadata_index();
+    let count = index.len();
+    ok(
+        "内置元数据索引已读取。",
+        json!({ "entries": index, "count": count }),
     )
 }
 
@@ -7143,9 +7192,16 @@ base_url = "https://example.invalid/v1"
         let events = std::cell::RefCell::new(Vec::new());
         stop_codex_plus_for_restart(
             || events.borrow_mut().push("codex"),
-            || { events.borrow_mut().push("cleanup"); Ok(()) },
-            || { events.borrow_mut().push("launcher"); Ok(()) },
-        ).unwrap();
+            || {
+                events.borrow_mut().push("cleanup");
+                Ok(())
+            },
+            || {
+                events.borrow_mut().push("launcher");
+                Ok(())
+            },
+        )
+        .unwrap();
         assert_eq!(*events.borrow(), ["codex", "cleanup", "launcher"]);
     }
 
@@ -7156,7 +7212,10 @@ base_url = "https://example.invalid/v1"
         let result = stop_codex_plus_for_restart(
             || stopped.set(true),
             || anyhow::bail!("cleanup still running"),
-            || { killed.set(true); Ok(()) },
+            || {
+                killed.set(true);
+                Ok(())
+            },
         );
         assert!(result.is_err());
         assert!(stopped.get());
