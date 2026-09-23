@@ -5,6 +5,7 @@
 
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelCatalogEntry {
@@ -21,18 +22,15 @@ pub struct ModelCatalogEntry {
 /// 括号内非合法窗口 token 时，整串作为 slug 且 window=None（不剥离括号）。
 pub fn parse_model_suffix(raw: &str) -> (String, Option<u64>) {
     let raw = raw.trim();
-    if let Some(close) = raw.rfind(']') {
-        // 仅当 ] 是最后一个字符时才视为后缀
-        if close == raw.len() - 1 {
-            if let Some(open) = raw[..close].rfind('[') {
-                let inner = raw[open + 1..close].trim();
-                let slug = raw[..open].trim();
-                if !slug.is_empty() {
-                    if let Some(window) = parse_window_token(inner) {
-                        return (slug.to_string(), Some(window));
-                    }
-                }
-            }
+    // 仅当 ] 是最后一个字符时才视为后缀
+    if let Some(close) = raw.rfind(']')
+        && close == raw.len() - 1
+        && let Some(open) = raw[..close].rfind('[')
+    {
+        let inner = raw[open + 1..close].trim();
+        let slug = raw[..open].trim();
+        if let Some(window) = parse_window_token(inner).filter(|_| !slug.is_empty()) {
+            return (slug.to_string(), Some(window));
         }
     }
     (raw.to_string(), None)
@@ -304,8 +302,18 @@ const VENDOR_METADATA_SOURCES: &[(&str, &str)] = &[
     ),
 ];
 
+/// 该 slug 是否需要落一份内置元数据 catalog（无用户窗口/元数据时也要生成）。
+/// 判定与生成链的模板查找保持一致：精调/供应商层、运行时官方缓存、bundled
+/// 静态资产任一命中即算——少走一层会让该层能提供元数据的模型拿不到 catalog，
+/// 窗口回落 codex 默认值。
 pub fn requires_bundled_metadata_catalog(slug: &str) -> bool {
-    compatibility_metadata_entry(slug).is_some()
+    if compatibility_metadata_entry(slug).is_some() {
+        return true;
+    }
+    if runtime_models_cache_entry(slug).is_some() {
+        return true;
+    }
+    bundled_template_entry(slug).is_some()
 }
 
 pub fn model_ui_metadata(slug: &str) -> Option<Value> {
@@ -426,16 +434,20 @@ pub fn builtin_model_metadata_index() -> Vec<Value> {
             push_entry(source, &entry);
         }
     }
-    if let Ok(catalog) = serde_json::from_str::<Value>(
+    let runtime_cache = serde_json::from_str::<Value>(
         &std::fs::read_to_string(
             crate::codex_home::default_codex_home_dir().join("models_cache.json"),
         )
         .unwrap_or_default(),
-    ) {
-        if let Some(models) = catalog.get("models").and_then(Value::as_array) {
-            for entry in models {
-                push_entry("官方内置", entry);
-            }
+    );
+    if let Some(models) = runtime_cache
+        .ok()
+        .as_ref()
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(Value::as_array)
+    {
+        for entry in models {
+            push_entry("官方内置", entry);
         }
     }
     for entry in catalog_models(BUNDLED_TEMPLATE_JSON).into_iter().flatten() {
@@ -504,7 +516,6 @@ pub(crate) fn build_model_catalog_json_with_capabilities(
             let max_context_window = entry
                 .suffix_window
                 .or(fallback_window)
-                .map(|window| window)
                 .unwrap_or_else(|| metadata_max_window.unwrap_or(context_window));
             model["slug"] = json!(entry.slug);
             if !has_model_metadata {
@@ -631,6 +642,13 @@ fn find_catalog_entry<'a>(models: &'a [Value], slug: &str) -> Option<&'a Value> 
         })
 }
 
+/// 测试钩子：钉死「精确匹配优先于大小写不敏感」这条优先级规则。
+/// 同一 catalog 同时存在 Foo/foo 两条时，查询 Foo 必须命中 Foo 本身。
+#[doc(hidden)]
+pub fn find_catalog_entry_for_test<'a>(models: &'a [Value], slug: &str) -> Option<&'a Value> {
+    find_catalog_entry(models, slug)
+}
+
 fn bundled_template_entry(slug: &str) -> Option<Value> {
     let catalog: Value = serde_json::from_str(BUNDLED_TEMPLATE_JSON).ok()?;
     find_catalog_entry(catalog.get("models")?.as_array()?, slug).cloned()
@@ -639,6 +657,51 @@ fn bundled_template_entry(slug: &str) -> Option<Value> {
 fn first_bundled_template_entry() -> Option<Value> {
     let catalog: Value = serde_json::from_str(BUNDLED_TEMPLATE_JSON).ok()?;
     catalog.get("models")?.as_array()?.first().cloned()
+}
+
+/// 未命中内置元数据时生成链的真实回退（bundled 静态资产首条），
+/// 供管理器 UI 显示「回退：<slug>」标签用。返回 (slug, context_window)。
+pub fn fallback_template_info() -> Option<(String, u64)> {
+    let entry = first_bundled_template_entry()?;
+    let slug = entry.get("slug")?.as_str()?.to_string();
+    let context_window = entry
+        .get("context_window")
+        .and_then(Value::as_u64)
+        .unwrap_or(272_000);
+    Some((slug, context_window))
+}
+
+/// vendor 元数据解析的进程级缓存：同一份 &'static str �次访问后按 slug 建索引，
+/// 后续查找只做一次 hash，不再整份 from_str。
+fn vendor_catalog_index(
+    catalog_json: &'static str,
+) -> &'static std::collections::HashMap<String, Value> {
+    static INDEXES: OnceLock<
+        Mutex<HashMap<&'static str, std::collections::HashMap<String, Value>>>,
+    > = OnceLock::new();
+    let indexes = INDEXES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = indexes
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let index = map.entry(catalog_json).or_insert_with(|| {
+        let mut index = std::collections::HashMap::new();
+        let catalog = serde_json::from_str::<Value>(catalog_json).ok();
+        let models = catalog
+            .as_ref()
+            .and_then(|catalog| catalog.get("models"))
+            .and_then(Value::as_array);
+        if let Some(models) = models {
+            for model in models {
+                if let Some(slug) = model.get("slug").and_then(Value::as_str) {
+                    index.insert(slug.to_ascii_lowercase(), model.clone());
+                }
+            }
+        }
+        index
+    });
+    // 安全性：索引一旦插入就不再移除或替换，拿到的引用会与 Mutex 内的值
+    // 同生命周期存活（进程级缓存）；锁本身只在插入时短暂持有。
+    unsafe { &*(index as *const std::collections::HashMap<String, Value>) }
 }
 
 fn compatibility_metadata_entry(slug: &str) -> Option<Value> {
@@ -654,7 +717,10 @@ fn vendor_source_metadata_entry(slug: &str) -> Option<(&'static str, Value)> {
         })
 }
 
-fn catalog_metadata_entry(catalog_json: &str, slug: &str) -> Option<Value> {
-    let catalog: Value = serde_json::from_str(catalog_json).ok()?;
-    find_catalog_entry(catalog.get("models")?.as_array()?, slug).cloned()
+fn catalog_metadata_entry(catalog_json: &'static str, slug: &str) -> Option<Value> {
+    // 索引键统一小写：查找链自带 eq_ignore_ascii_case 语义，
+    // 精确命中场景由「同 catalog 同时存在 Foo/foo」测试另行守护。
+    vendor_catalog_index(catalog_json)
+        .get(&slug.to_ascii_lowercase())
+        .cloned()
 }

@@ -93,12 +93,14 @@ import {
   importSaveDecision,
   metadataMatchesBuiltin,
   metadataSourceTags,
+  modelSlugFromRowName,
   parseModelMetadataDocument,
   parseModelMetadataMap,
   remapModelMetadataSlugs,
   replaceModelMetadataForSlug,
   retainModelMetadataForSlugs,
   serializeModelMetadataDocument,
+  suffixWindowString,
   synchronizeModelMetadataDocumentLimitsPreview,
   type BuiltinModelMetadataMatch,
   type ImportedModelMetadata,
@@ -7587,7 +7589,9 @@ function RelayProfileEditor({
       // 内置预填态（用户尚未编辑）跟随新名字重新预填；已编辑/自有内容不动。
       if (importPrefillSource === "builtin" && match?.matched && match.entry) {
         const document = builtinEntryToImportDocument(match.entry);
-        const preview = parseModelMetadataDocument(document, activeImportSlug);
+        // 文档写的是后端返回的规范 slug，匹配时也要用规范 slug（剥掉 [1M] 后缀），
+        // 否则带后缀的行名永远匹配不到，面板一打开就报「找不到 slug」。
+        const preview = parseModelMetadataDocument(document, modelSlugFromRowName(activeImportSlug));
         setMetadataImportDocument(document);
         setMetadataImportError("");
         setMetadataImportPreview(preview.ok ? preview.value : null);
@@ -7738,7 +7742,9 @@ function RelayProfileEditor({
       setBuiltinMatch(match);
       setBuiltinMatchSlug(slug);
     }
-    const existingPreview = document ? parseModelMetadataDocument(document, slug) : null;
+    const existingPreview = document
+      ? parseModelMetadataDocument(document, modelSlugFromRowName(slug))
+      : null;
     setMetadataImportTarget({
       index,
       slug,
@@ -7802,7 +7808,7 @@ function RelayProfileEditor({
       commitModelMetadata(clearModelMetadataForSlug(profile.modelMetadata, slug));
     }
     const document = builtinEntryToImportDocument(match.entry);
-    const preview = parseModelMetadataDocument(document, slug);
+    const preview = parseModelMetadataDocument(document, modelSlugFromRowName(slug));
     setMetadataImportDocument(document);
     setMetadataImportError("");
     setMetadataImportPreview(preview.ok ? preview.value : null);
@@ -8157,6 +8163,8 @@ function RelayProfileEditor({
                     ? metadataMatchesBuiltin(metadataImportPreview.metadata, builtinMetadata)
                     : false,
                   matchedSource: builtinMatch?.matched ? builtinMatch.source : undefined,
+                  // 回退模板名从后端 fallback 字段实时取（bundled 静态资产首条），不写死
+                  fallbackSlug: builtinMatch?.fallback?.slug,
                 });
                 return (
                   <div className="relay-model-entry" key={index}>
@@ -8312,13 +8320,15 @@ function RelayProfileEditor({
                               imported,
                               builtinMatch,
                               builtinIndexSlug: builtinIndex.get(slug.toLowerCase()),
+                              // 回退模板名从后端 fallback 字段实时取，不写死
+                              fallbackSlug: builtinMatch?.fallback?.slug,
                             }).map((tag) => (
                               <span
                                 key={tag.kind}
                                 className={`relay-model-source-badge relay-model-source-${tag.tone}`}
-                                title={tag.title}
+                                title={tf(tag.titleKey, tag.titleArgs)}
                               >
-                                {tag.text}
+                                {tf(tag.textKey, tag.textArgs)}
                               </span>
                             ))}
                           </div>
@@ -11720,19 +11730,13 @@ function codexModelFromConfig(contents: string): string {
 }
 
 /// 解析模型后缀语法，如 deepseek-v4-flash[1M] -> { slug: "deepseek-v4-flash", window: 1000000 }
-/// 非法或没有后缀时返回原串作为 slug。
+/// 非法或没有后缀时返回原串作为 slug。剥离与换算统一走 model-metadata.ts 的
+/// suffixWindowString/modelSlugFromRowName，避免两处实现对「什么算合法后缀」
+/// 的判断分叉。
 function parseModelSuffix(raw: string): { slug: string; window?: number } {
-  const trimmed = raw.trim();
-  const match = /^(.*?)\[(\d+(?:[KkMm])?)\]$/.exec(trimmed);
-  if (!match) return { slug: trimmed };
-  const inner = match[2];
-  const numPart = inner.replace(/[KkMm]$/, "");
-  const multiplier = inner.endsWith("K") || inner.endsWith("k") ? 1_000
-    : inner.endsWith("M") || inner.endsWith("m") ? 1_000_000
-    : 1;
-  const window = Number.parseInt(numPart, 10) * multiplier;
-  if (!Number.isFinite(window) || window <= 0) return { slug: trimmed };
-  return { slug: match[1].trim(), window };
+  const window = suffixWindowString(raw);
+  if (window === null) return { slug: raw.trim() };
+  return { slug: modelSlugFromRowName(raw), window: Number(window) };
 }
 
 function codexBaseUrlFromConfig(contents: string): string {
