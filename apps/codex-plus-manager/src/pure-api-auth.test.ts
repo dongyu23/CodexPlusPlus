@@ -8,6 +8,7 @@ import { independentProxyEnabled, setIndependentProxyConfigured, requestCompatib
 import { sessionProviderForProtocol } from "./relay-session.ts";
 import { aggregateMemberCandidates, isAggregateProfile, isOfficialLoginMemberProfile } from "./aggregate-members.ts";
 import { relayProfileWithNormalizedApiKeys, relayProfileWithUpdatedApiKey } from "./provider-api-keys.ts";
+import { resolveProviderName } from "./provider-name.ts";
 
 // 执行 App 中实际使用的配置 helper，避免把另一份实现复制进测试。
 const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
@@ -41,7 +42,7 @@ const context = vm.createContext({
   CHAT_UPSTREAM_BASE_URL_KEY: "codex_plus_chat_base_url",
   requestCompatibilityEnabled, independentProxyEnabled, normalizeRelayModelRoutes, sessionProviderForProtocol, modelSlugFromRowName, suffixWindowString,
   aggregateMemberCandidates, isAggregateProfile, isOfficialLoginMemberProfile,
-  relayProfileWithUpdatedApiKey,
+  relayProfileWithUpdatedApiKey, resolveProviderName,
 });
 vm.runInContext(code, context);
 
@@ -358,4 +359,24 @@ test("multiline prompt text never receives provider credentials or supplies fake
     assert.equal(context.codexExperimentalBearerTokenFromConfig(fixture.loaded), "fixture-provider-key");
     assert.equal(context.codexExperimentalBearerTokenFromConfig(fixture.reloaded), "fixture-edited-key");
   }
+});
+
+// issue #2682：用户在 config.toml 预览里改过 name 后，修改 Base URL 等字段不能把 name 写回表名。
+test("editing the base URL keeps the provider display name set in the config preview", () => {
+  const updated = context.applyRelayProfilePatchToFiles(profile(false), { baseUrl: "https://edited.example/v1" });
+  assert.equal(updated.upstreamBaseUrl, "https://edited.example/v1");
+  assert.match(updated.configContents, /base_url = "https:\/\/edited\.example\/v1"/);
+  assert.match(updated.configContents, /name = "Friendly vendor"/);
+});
+
+// name 只在缺失或为空时才回落到 provider 表名。
+test("provider name falls back to the table id only when missing or blank", () => {
+  const missing = context.setCodexProviderStringKey(
+    'model_provider = "custom"\n\n[model_providers.custom]\nwire_api = "responses"\n',
+    "base_url", "https://relay.example/v1");
+  assert.match(missing, /name = "custom"/);
+  const blank = context.setCodexProviderStringKey(
+    'model_provider = "custom"\n\n[model_providers.custom]\nname = ""\nwire_api = "responses"\n',
+    "base_url", "https://relay.example/v1");
+  assert.match(blank, /name = "custom"/);
 });

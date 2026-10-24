@@ -16097,7 +16097,7 @@ function ensureCodexProviderDefaults(
 ): string {
   let next = contents;
   const section = codexProviderSectionName(provider);
-  next = setTomlSectionStringKey(next, section, "name", provider);
+  next = setTomlSectionStringKey(next, section, "name", resolveProviderName(next, provider));
   next = setTomlSectionStringKey(next, section, "wire_api", "responses");
   return options.requiresOpenAiAuth === false ? next : setTomlSectionBoolKey(next, section, "requires_openai_auth", true);
 }
