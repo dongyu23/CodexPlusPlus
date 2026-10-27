@@ -6,6 +6,7 @@ use codex_plus_core::watcher::{
     remove_macos_launch_agent_at, should_recover_stale_launcher, watcher_disabled_flag,
     set_watcher_start_codex_at, set_watcher_start_codex_on_open_at, set_watcher_start_minimized_at,
     watcher_start_codex_at, watcher_start_codex_on_open_at, watcher_start_minimized_at,
+    manager_lightweight_on_close_at, set_manager_lightweight_on_close_at,
     write_macos_launch_agent_at,
 };
 
@@ -95,6 +96,21 @@ fn watcher_start_codex_on_open_is_a_separate_persistent_preference() {
 
     set_watcher_start_codex_on_open_at(dir.path(), false).unwrap();
     assert!(!watcher_start_codex_on_open_at(dir.path()));
+}
+
+// 轻量模式（#2677）：默认关闭（不存在标记文件），关掉时移除标记，重复关闭幂等。
+#[test]
+fn manager_lightweight_on_close_is_a_separate_persistent_preference() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(!manager_lightweight_on_close_at(dir.path()));
+
+    set_manager_lightweight_on_close_at(dir.path(), true).unwrap();
+    assert!(manager_lightweight_on_close_at(dir.path()));
+
+    set_manager_lightweight_on_close_at(dir.path(), false).unwrap();
+    assert!(!manager_lightweight_on_close_at(dir.path()));
+    // 关闭时标记已不存在，再关一次不应报错。
+    set_manager_lightweight_on_close_at(dir.path(), false).unwrap();
 }
 
 #[test]

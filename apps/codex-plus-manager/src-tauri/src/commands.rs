@@ -760,6 +760,7 @@ pub struct WatcherPayload {
     pub start_minimized: bool,
     pub start_codex: bool,
     pub start_codex_on_open: bool,
+    pub lightweight_on_close: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -6444,6 +6445,25 @@ pub fn set_watcher_start_minimized(minimized: bool) -> CommandResult<WatcherPayl
     }
 }
 
+/// 「关闭窗口时进入轻量模式」（#2677）：开启后关窗销毁 WebView，只留托盘与后台服务。
+#[tauri::command]
+pub fn set_manager_lightweight_on_close(enabled: bool) -> CommandResult<WatcherPayload> {
+    match codex_plus_core::watcher::set_manager_lightweight_on_close(enabled) {
+        Ok(()) if enabled => ok(
+            "已开启轻量模式：关闭窗口时将释放界面进程，从托盘可重新打开。",
+            watcher_payload(),
+        ),
+        Ok(()) => ok(
+            "已关闭轻量模式：关闭窗口时保留界面进程，驻留托盘。",
+            watcher_payload(),
+        ),
+        Err(error) => failed(
+            &format!("设置轻量模式失败：{error}"),
+            watcher_payload(),
+        ),
+    }
+}
+
 #[tauri::command]
 pub fn set_watcher_start_codex(start_codex: bool) -> CommandResult<WatcherPayload> {
     match codex_plus_core::watcher::set_watcher_start_codex(start_codex) {
@@ -8852,6 +8872,7 @@ fn watcher_payload() -> WatcherPayload {
         start_minimized: codex_plus_core::watcher::watcher_start_minimized(),
         start_codex: codex_plus_core::watcher::watcher_start_codex(),
         start_codex_on_open: codex_plus_core::watcher::watcher_start_codex_on_open(),
+        lightweight_on_close: codex_plus_core::watcher::manager_lightweight_on_close(),
     }
 }
 

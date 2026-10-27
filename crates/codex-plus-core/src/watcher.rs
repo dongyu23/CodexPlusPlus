@@ -148,6 +148,44 @@ pub fn watcher_start_codex_on_open() -> bool {
     watcher_start_codex_on_open_at(&crate::paths::default_app_state_dir())
 }
 
+pub fn manager_lightweight_on_close_flag(root: &Path) -> PathBuf {
+    root.join("manager.lightweight-on-close")
+}
+
+pub fn default_manager_lightweight_on_close_flag() -> PathBuf {
+    manager_lightweight_on_close_flag(&crate::paths::default_app_state_dir())
+}
+
+/// 关闭管理器主窗口时销毁 WebView 进入轻量模式（#2677）。
+/// 标记文件机制与启动偏好一致：存在即开启；默认不存在，保留原有的隐藏窗口行为。
+pub fn set_manager_lightweight_on_close_at(root: &Path, enabled: bool) -> std::io::Result<()> {
+    let flag = manager_lightweight_on_close_flag(root);
+    if enabled {
+        if let Some(parent) = flag.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(flag, b"enabled")
+    } else {
+        match std::fs::remove_file(flag) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+pub fn set_manager_lightweight_on_close(enabled: bool) -> std::io::Result<()> {
+    set_manager_lightweight_on_close_at(&crate::paths::default_app_state_dir(), enabled)
+}
+
+pub fn manager_lightweight_on_close_at(root: &Path) -> bool {
+    manager_lightweight_on_close_flag(root).is_file()
+}
+
+pub fn manager_lightweight_on_close() -> bool {
+    manager_lightweight_on_close_at(&crate::paths::default_app_state_dir())
+}
+
 pub fn enable_watcher_at(root: &Path) -> std::io::Result<()> {
     let flag = watcher_disabled_flag(root);
     if flag.exists() {

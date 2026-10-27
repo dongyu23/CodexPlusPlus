@@ -202,17 +202,7 @@ pub fn run() {
             } else {
                 "/index.html"
             };
-            let mut main_window_builder =
-                tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App(url.into()))
-                    .title("Codex++")
-                    .visible(!start_minimized)
-                    .focused(!start_minimized)
-                    .inner_size(1180.0, 820.0)
-                    .min_inner_size(960.0, 720.0);
-            if let Some(icon) = app.default_window_icon().cloned() {
-                main_window_builder = main_window_builder.icon(icon)?;
-            }
-            let main_window = main_window_builder.build()?;
+            let main_window = build_main_window(app.handle(), url, !start_minimized)?;
             install_tray(app)?;
             gateway_commands::set_app_handle(app.handle().clone());
             codex_plus_core::settings::set_external_settings_change_listener(gateway_commands::notify_settings_changed);
@@ -420,6 +410,7 @@ pub fn run() {
             commands::load_watcher_state,
             commands::set_watcher_enabled,
             commands::set_watcher_start_minimized,
+            commands::set_manager_lightweight_on_close,
             commands::set_watcher_start_codex,
             commands::set_watcher_start_codex_on_open,
             commands::load_relay_proxy,
@@ -477,8 +468,12 @@ pub fn run() {
         .build(tauri::generate_context!());
     match app_result {
         Ok(app) => app.run(|app_handle, event| {
-            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
-                if !SHUTDOWN_COMPLETE.load(Ordering::SeqCst) {
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = &event {
+                if code.is_none() {
+                    // 最后一个窗口被销毁（轻量模式关窗，#2677）不是用户要退出：
+                    // 拦下退出请求，托盘与后台 helper 继续工作。
+                    api.prevent_exit();
+                } else if !SHUTDOWN_COMPLETE.load(Ordering::SeqCst) {
                     api.prevent_exit();
                     if !SHUTDOWN_STARTED.swap(true, Ordering::SeqCst) {
                         APP_EXITING.store(true, Ordering::SeqCst);
@@ -746,13 +741,25 @@ fn register_main_window_events<R: tauri::Runtime>(window: tauri::WebviewWindow<R
             }
 
             api.prevent_close();
+            set_manager_activation_policy(&close_event_app, false);
+            if codex_plus_core::watcher::manager_lightweight_on_close() {
+                // 轻量模式（#2677）：销毁 WebView，连带 WebView2/Chromium 渲染进程
+                // 一起释放，后台只留托盘与 helper。排队到本轮事件循环之后执行，
+                // 避免在窗口事件回调里同步销毁自身窗口。
+                let app = close_event_app.clone();
+                let _ = close_event_app.run_on_main_thread(move || {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.destroy();
+                    }
+                });
+                return;
+            }
             // Windows 上 Tao 的 VISIBLE 标记可能停在 false（窗口曾被 Win32 直接显示
             // 或隐藏），此时 hide() 会被框架当成重复操作跳过，窗口既不关闭也不隐藏
             // （issue #1542）。先强制同步为可见再隐藏，保证 hide() 真正执行。
             #[cfg(windows)]
             let _ = close_event_window.show();
             let _ = close_event_window.hide();
-            set_manager_activation_policy(&close_event_app, false);
         }
         _ => {}
     });
@@ -792,9 +799,11 @@ fn update_tray_labels<R: tauri::Runtime>(
     }
 }
 
-/// 托盘快捷面板的「打开 Codex++」。
+/// 托盘快捷面板的「打开 Codex++」。面板命令在非主线程执行，而轻量模式
+/// 销毁窗口后的重建只能在主线程做，统一派发过去。
 pub(crate) fn show_main_window_from<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
-    show_main_window(app_handle);
+    let app = app_handle.clone();
+    let _ = app_handle.run_on_main_thread(move || show_main_window(&app));
 }
 
 /// 托盘快捷面板的「退出」：与托盘菜单的退出一致。
@@ -803,12 +812,47 @@ pub(crate) fn request_app_exit<R: tauri::Runtime>(app_handle: &tauri::AppHandle<
     app_handle.exit(0);
 }
 
+/// 主窗口的唯一创建入口：启动 setup 与轻量模式销毁后的重建共用同一份配置（#2677）。
+/// 只能在主线程调用。
+fn build_main_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    url: &str,
+    visible: bool,
+) -> tauri::Result<tauri::WebviewWindow<R>> {
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App(url.into()))
+            .title("Codex++")
+            .visible(visible)
+            .focused(visible)
+            .inner_size(1180.0, 820.0)
+            .min_inner_size(960.0, 720.0);
+    if let Some(icon) = app.default_window_icon().cloned() {
+        builder = builder.icon(icon)?;
+    }
+    builder.build()
+}
+
 fn show_main_window<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
+    set_manager_activation_policy(app_handle, true);
     if let Some(window) = app_handle.get_webview_window("main") {
-        set_manager_activation_policy(app_handle, true);
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        return;
+    }
+    // 轻量模式销毁了主 WebView（#2677）：按启动时的同一份配置重建。后端进程
+    // 一直在跑，前端重新加载时照常拿到状态指示灯、日志尾部与当前设置。
+    match build_main_window(app_handle, "/index.html", true) {
+        Ok(window) => {
+            register_main_window_events(window.clone());
+            let _ = window.set_focus();
+        }
+        Err(error) => {
+            let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
+                "manager.rebuild_main_window_failed",
+                serde_json::json!({ "message": error.to_string() }),
+            );
+        }
     }
 }
 

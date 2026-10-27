@@ -45,9 +45,9 @@ fn manager_main_window_uses_default_window_icon_explicitly() {
     let lib_rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
         .expect("read manager lib.rs");
 
-    assert!(lib_rs.contains("main_window_builder"));
+    assert!(lib_rs.contains("build_main_window"));
     assert!(lib_rs.contains("app.default_window_icon().cloned()"));
-    assert!(lib_rs.contains("main_window_builder = main_window_builder.icon(icon)?"));
+    assert!(lib_rs.contains("builder = builder.icon(icon)?"));
 }
 
 #[test]
@@ -64,11 +64,26 @@ fn manager_close_minimizes_to_tray_without_confirmation() {
     assert!(lib_rs.contains("let _ = close_event_window.hide();"));
     assert!(!lib_rs.contains("startup_is_transient()"));
     // 登录启动可以按已有设置隐藏窗口，手动打开仍保持可见。
-    assert!(lib_rs.contains(".visible(!start_minimized)"));
+    assert!(lib_rs.contains("build_main_window(app.handle(), url, !start_minimized)"));
     assert!(lib_rs.contains("codex_plus_launcher::shutdown()"));
     assert!(!app_tsx.contains("CloseConfirmDialog"));
     assert!(app_tsx.contains("manager_exit_app"));
     assert!(app_tsx.contains("manager_hide_to_tray"));
+}
+
+// 轻量模式（#2677）：关窗销毁 WebView、最后一个窗口消失时拦下退出请求、
+// 托盘唤起时按启动配置重建主窗口。这三处任一被重构掉，此断言会先失败。
+#[test]
+fn manager_lightweight_mode_destroys_webview_and_rebuilds_from_tray() {
+    let lib_rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
+        .expect("read manager lib.rs");
+
+    assert!(lib_rs.contains("codex_plus_core::watcher::manager_lightweight_on_close()"));
+    assert!(lib_rs.contains("window.destroy()"));
+    // code: None（最后一个窗口被销毁）不是用户退出，必须拦下。
+    assert!(lib_rs.contains("if code.is_none() {"));
+    // 重建走与启动同一份构建配置，事件处理也要重新注册。
+    assert!(lib_rs.contains("build_main_window(app_handle, \"/index.html\", true)"));
 }
 
 #[test]

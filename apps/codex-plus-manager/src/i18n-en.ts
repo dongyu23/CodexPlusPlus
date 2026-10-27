@@ -593,6 +593,8 @@ export const EN_PLAIN: Record<string, string> = {
   "仅登录启动 Codex++ 时自动启动 Codex；手动打开 Codex++ 仍不会自动启动。": "Start Codex only when Codex++ is opened by the login item; manually opening Codex++ will not start it automatically.",
   "打开 Codex++ 时自动启动 Codex": "Start Codex when opening Codex++",
   "仅手动打开 Codex++ 时生效；已有 Codex 会先恢复，不会重复启动。": "Only applies when Codex++ is opened manually; an existing Codex is resumed and never started twice.",
+  "关闭窗口时进入轻量模式": "Lightweight mode on window close",
+  "关闭管理器窗口时销毁界面进程，后台只留托盘与静默服务，降低挂机内存占用；从托盘可重新打开，完全退出用托盘菜单的退出。": "Closing the manager window destroys the webview process and keeps only the tray and background services to cut idle memory; reopen it from the tray and quit completely via the tray menu.",
   "检查 Codex++ 入口、Codex 应用和开机启动状态": "Check the Codex++ shortcut, Codex app and login startup status",
 
   "Fast（priority）支持": "Fast (priority) support",

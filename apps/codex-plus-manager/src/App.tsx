@@ -1073,6 +1073,7 @@ type WatcherResult = CommandResult<{
   start_minimized: boolean;
   start_codex: boolean;
   start_codex_on_open: boolean;
+  lightweight_on_close: boolean;
 }>;
 
 // 与 Rust 侧 `auto_takeover::AutoTakeoverPayload`（rename_all = "camelCase"）逐字段对齐。
@@ -2868,6 +2869,14 @@ export function App() {
     }
   };
 
+  const setManagerLightweightOnClose = async (enabled: boolean) => {
+    const result = await run(() => call<WatcherResult>("set_manager_lightweight_on_close", { enabled }));
+    if (result) {
+      setWatcher(result);
+      showNotice(t("关闭窗口时进入轻量模式"), result.message, result.status);
+    }
+  };
+
   const setWatcherStartCodex = async (startCodex: boolean) => {
     const result = await run(() => call<WatcherResult>("set_watcher_start_codex", { startCodex }));
     if (result) {
@@ -4295,6 +4304,7 @@ export function App() {
       },
       setWatcherEnabled,
       setWatcherStartMinimized,
+      setManagerLightweightOnClose,
       setWatcherStartCodex,
       setWatcherStartCodexOnOpen,
       setAutoTakeover,
@@ -4969,6 +4979,7 @@ type Actions = {
   goLogs: () => Promise<void>;
   setWatcherEnabled: (enabled: boolean) => Promise<void>;
   setWatcherStartMinimized: (minimized: boolean) => Promise<void>;
+  setManagerLightweightOnClose: (enabled: boolean) => Promise<void>;
   setWatcherStartCodex: (startCodex: boolean) => Promise<void>;
   setWatcherStartCodexOnOpen: (enabled: boolean) => Promise<void>;
   setAutoTakeover: (enabled: boolean) => Promise<void>;
@@ -9724,6 +9735,19 @@ function MaintenanceScreen({
             <span>
               <strong>{t("启动时自动最小化")}</strong>
               <small>{t("仅登录启动时隐藏到托盘；手动打开 Codex++ 仍显示主窗口。")}</small>
+            </span>
+            <ToggleVisual />
+          </label>
+          <label className="switch-row">
+            <input
+              checked={Boolean(watcher?.lightweight_on_close)}
+              disabled={!watcher}
+              onChange={(event) => void actions.setManagerLightweightOnClose(event.currentTarget.checked)}
+              type="checkbox"
+            />
+            <span>
+              <strong>{t("关闭窗口时进入轻量模式")}</strong>
+              <small>{t("关闭管理器窗口时销毁界面进程，后台只留托盘与静默服务，降低挂机内存占用；从托盘可重新打开，完全退出用托盘菜单的退出。")}</small>
             </span>
             <ToggleVisual />
           </label>
